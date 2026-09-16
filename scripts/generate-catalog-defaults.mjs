@@ -57,6 +57,7 @@ const catalog = await import(pathToFileURL(join(packageDir, 'dist', 'providers',
 const providers = catalog.builtinProviders()
 const generatedAt = new Date(catalog.getBuiltinModelDataGeneratedAt()).toISOString()
 const entries = {}
+const spellings = {}
 const skipped = { protocol: [], endpoint: [] }
 
 for (const provider of providers) {
@@ -70,13 +71,30 @@ for (const provider of providers) {
   if (typeof provider.baseUrl === 'string' && provider.baseUrl.length > 0) entry.baseUrl = provider.baseUrl
   else skipped.endpoint.push(provider.id)
   entries[provider.id] = entry
+
+  // A level's wire value is usually its own name — pi-ai's convention — so only the
+  // exceptions are recorded. They are not rare enough to ignore: an OpenAI-compatible
+  // gateway sends the string "none" to switch thinking off, and one provider collapses
+  // two levels onto a single wire value.
+  for (const model of models) {
+    const map = model.thinkingLevelMap
+    if (map === undefined || map === null) continue
+    const exceptions = {}
+    for (const [level, wire] of Object.entries(map)) {
+      if (wire === null) continue
+      if (wire !== level) exceptions[level] = wire
+    }
+    if (Object.keys(exceptions).length > 0) spellings[`${provider.id}/${model.id}`] = exceptions
+  }
 }
 
 const sorted = Object.fromEntries(Object.entries(entries).sort(([left], [right]) => left.localeCompare(right)))
+const sortedSpellings = Object.fromEntries(Object.entries(spellings).sort(([left], [right]) => left.localeCompare(right)))
 const snapshot = {
   generatedAt,
   source: `@earendil-works/pi-ai@${version}`,
   providers: sorted,
+  spellings: sortedSpellings,
 }
 const block = render(snapshot)
 
@@ -106,6 +124,7 @@ if (!options.quiet) {
   process.stdout.write(`catalog-defaults: ${Object.keys(sorted).length} providers from ${snapshot.source}\n`)
   process.stdout.write(`  snapshot date: ${generatedAt}\n`)
   process.stdout.write(`  with protocol: ${withApi}; with endpoint: ${withBase}\n`)
+  process.stdout.write(`  spellings differing from the level name: ${Object.keys(sortedSpellings).length} model(s)\n`)
   process.stdout.write(`  no protocol recorded: ${skipped.protocol.length === 0 ? 'none' : skipped.protocol.join(', ')}\n`)
   process.stdout.write(`  no endpoint recorded: ${skipped.endpoint.length === 0 ? 'none' : skipped.endpoint.join(', ')}\n`)
   process.stdout.write(`  ${next === client ? 'unchanged' : 'updated'} ${clientPath}\n`)
@@ -134,6 +153,11 @@ function render(snapshot) {
     if (entry.baseUrl !== undefined) fields.push(`baseUrl: ${JSON.stringify(entry.baseUrl)}`)
     fields.push(`models: ${entry.models}`)
     lines.push(`\t\t${JSON.stringify(id)}: Object.freeze({ ${fields.join(', ')} }),`)
+  }
+  lines.push('\t}),', '\tspellings: Object.freeze({')
+  for (const [key, exceptions] of Object.entries(snapshot.spellings)) {
+    const fields = Object.entries(exceptions).map(([level, wire]) => `${level}: ${JSON.stringify(wire)}`)
+    lines.push(`\t\t${JSON.stringify(key)}: Object.freeze({ ${fields.join(', ')} }),`)
   }
   lines.push('\t}),', '})', END)
   return `${lines.join('\n')}\n`

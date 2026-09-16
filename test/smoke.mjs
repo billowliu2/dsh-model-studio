@@ -276,6 +276,10 @@ function makeContext() {
         id: 'deepseek-v4.1-flash',
         name: 'DeepSeek V4.1 Flash',
         reasoning: { efforts: [{ id: 'off', name: 'Off' }, { id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' },
+      }, {
+        id: 'qwen3.8-flash',
+        name: 'Qwen 3.8 Flash',
+        reasoning: { efforts: [{ id: 'off', name: 'Off' }, { id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' },
       }] }],
     } }),
   }
@@ -376,7 +380,10 @@ state.scopeSnapshot = {
         headers: { 'x-opencode-session': 'dsh', 'user-agent': 'nope' },
         models: [
           { id: 'deepseek-v4.1-flash', contextWindow: 512000, input: ['text', 'image'], compat: { supportsStore: true } },
-          { id: 'qwen3.8-flash', reasoningEfforts: { off: null, high: 'high' } },
+          // The damaged shape this plugin used to write: seven levels for a model the
+          // catalog gives three, including the two that only count as supported
+          // *because* a map declares them.
+          { id: 'qwen3.8-flash', reasoningEfforts: { off: null, minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' } },
         ],
         modelOverrides: { 'deepseek-v4.1-flash': { maxTokens: 32000 } },
       },
@@ -401,6 +408,10 @@ for (const host of ['settings', 'drawer']) {
   const runtime = hookRuntime()
   const props = { t: (key) => key, host }
   let tree = render(StudioPanel, props, runtime)
+  // The host model catalog arrives asynchronously, and the capability rows read it
+  // to learn which levels a model may declare.
+  await flush()
+  tree = render(StudioPanel, props, runtime)
 
   check(`${host}: renders the provider list`, textOf(tree).includes('opencode-go'))
   check(`${host}: selects a provider and opens its details`, textOf(tree).includes('fieldDisplayName'))
@@ -441,6 +452,34 @@ for (const host of ['settings', 'drawer']) {
   check(`${host}: a model card renders its id and both capability selects`,
     textOf(firstCard).includes('deepseek-v4.1-flash') && elements(firstCard).filter((element) => element.type === 'select').length >= 2)
 
+  // The row whose map names levels the catalog does not give it must say so and offer
+  // a one-click way back to inheritance — the exact repair a real config needed.
+  const damaged = cards.filter((card) => card.props.draft.id === 'qwen3.8-flash')[0]
+  check(`${host}: the catalog's level set reaches the row`, JSON.stringify(damaged?.props.available?.levels) === JSON.stringify(['off', 'low', 'high']), JSON.stringify(damaged?.props.available))
+  const damagedCard = damaged.type(damaged.props)
+  const damagedText = textOf(damagedCard)
+  check(`${host}: unsupported declared levels are named, not hidden`,
+    damagedText.includes('levelsUnsupported') && damagedText.includes('xhigh') && damagedText.includes('max'), damagedText.slice(0, 200))
+  check(`${host}: the catalog's own levels are stated`, damagedText.includes('levelsCatalogKnown'))
+  // Located by its title: the button's own label is also part of `textOf`, which
+  // folds in the tooltip.
+  const fix = elements(damagedCard).filter((element) => element.type === 'button' && element.props.title === 'levelsFixHint')[0]
+  check(`${host}: a damaged row offers a reset to inheritance`, fix !== undefined)
+  damaged.props.onChange(Object.assign({}, damaged.props.draft, { reasoning: 'inherit', levels: [] }))
+  tree = render(StudioPanel, props, runtime)
+  // The section is a component element: its children exist only once it is invoked.
+  const repairedSection = elements(tree).filter((element) => element.type?.name === 'ModelSection')[0]
+  const repairedSectionTree = repairedSection === undefined ? [] : repairedSection.type(repairedSection.props)
+  const repaired = elements(repairedSectionTree).filter((element) => element.type?.name === 'ModelCard')
+    .filter((card) => card.props.draft.id === 'qwen3.8-flash')[0]
+  const repairedCard = repaired.type(repaired.props)
+  check(`${host}: resetting to inheritance clears the map and the warning`,
+    repaired.props.draft.reasoning === 'inherit' && repaired.props.draft.levels.length === 0
+    && !textOf(repairedCard).includes('levelsUnsupported'))
+  check(`${host}: an inherited row writes no level map back`,
+    exports_.__internals.entryFromDraft(repaired.props.draft).reasoningEfforts === undefined,
+    JSON.stringify(exports_.__internals.entryFromDraft(repaired.props.draft)))
+
   // Reference enrichment, end to end: the custom route answers with bare ids while
   // the installed catalog knows one of them, so the checklist must carry the
   // catalog's capabilities and leave the unknown id alone.
@@ -471,8 +510,17 @@ for (const host of ['settings', 'drawer']) {
     prefilled.contextWindow === '512000' && prefilled.maxTokens === '32000' && prefilled.name === 'MiniMax M3'
     && prefilled.input === 'inherit' && prefilled.reasoning === 'inherit',
     JSON.stringify(prefilled))
-  check(`${host}: the blanket thinking checkbox still covers what the reference cannot`,
-    exports_.__internals.draftFromCandidate(list[1], true).levels.length === 7)
+  // The blanket "declare thinking" checkbox used to seed all seven levels for a model
+  // the reference library could not describe. That is what wrote an impossible level
+  // map into a real config, so it now declares nothing without catalog coverage.
+  check(`${host}: the blanket thinking checkbox declares nothing the catalog cannot vouch for`,
+    exports_.__internals.draftFromCandidate(list[1], true).levels.length === 0
+    && exports_.__internals.draftFromCandidate(list[1], true).reasoning === 'inherit')
+  check(`${host}: a candidate the catalog covers gets exactly the catalog's levels`,
+    (() => {
+      const covered = exports_.__internals.draftFromCandidate(list[1], true, { known: true, levels: ['off', 'low', 'high'], spellings: undefined })
+      return covered.reasoning === 'custom' && JSON.stringify(covered.levels) === JSON.stringify(['off', 'low', 'high'])
+    })())
   const fillResult = exports_.__internals.fillDraftFromReference(
     { id: 'minimax-m3', name: 'typed by hand', contextWindow: '', maxTokens: '', input: 'inherit', reasoning: 'inherit', levels: [] },
     list[0]?.reference === undefined ? undefined : { model: list[0], stage: list[0].reference.stage, trusted: list[0].reference.trusted },
@@ -617,7 +665,6 @@ for (const host of ['settings', 'drawer']) {
   check('the preset label carries the catalog model count',
     textOf(tree).includes(`Anthropic · ${shippedDefaults.models}`) || presetOptionValues(presetSelect).includes('anthropic'),
     `Anthropic · ${shippedDefaults.models}`)
-
   state.writes.length = 0
   const submit = elements(tree).filter((element) => element.type === 'button' && textOf(element) === 'createSubmit')[0]
   check('the create button is available with the pre-filled values', submit !== undefined)

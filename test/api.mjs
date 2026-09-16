@@ -270,6 +270,7 @@ check('the protocol list is exactly pi-ai\'s three', JSON.stringify(PROTOCOLS) =
 const {
   THINKING_LEVELS,
   capabilityFrom,
+  capabilityTo,
   draftFromRaw,
   entryFromDraft,
   modelsOps,
@@ -351,9 +352,68 @@ check('only picked, genuinely new ids are added', mergedKeep.length === 2, JSON.
 check('an existing id keeps its draft, not the fetched one', mergedKeep[0].name === 'kept', JSON.stringify(mergedKeep[0]))
 check('fetched capacities land in the new draft', mergedKeep[1].contextWindow === '1000000' && mergedKeep[1].maxTokens === '', JSON.stringify(mergedKeep[1]))
 
-const mergedThinking = mergeDiscovered([], ['kimi-k3'], discovered, true)
-check('"declare thinking" seeds every level', mergedThinking[0].reasoning === 'custom' && mergedThinking[0].levels.length === 7, JSON.stringify(mergedThinking[0].levels))
-check('and those levels reach the entry as wire spellings', entryFromDraft(mergedThinking[0]).reasoningEfforts.max === 'max')
+// "Declare thinking" may only declare what the live catalog vouches for. Feeding it
+// a made-up level set is how this plugin once wrote seven levels for a provider that
+// supports five — and a declared map silently *widens* what the model picker offers,
+// because `xhigh` and `max` count as supported as soon as a map defines them.
+const catalogLevels = { known: true, levels: ['off', 'minimal', 'low', 'medium', 'high'], spellings: undefined }
+const mergedThinking = mergeDiscovered([], ['kimi-k3'], discovered, true, () => catalogLevels)
+check('"declare thinking" seeds exactly the catalog levels',
+  mergedThinking[0].reasoning === 'custom'
+  && JSON.stringify(mergedThinking[0].levels) === JSON.stringify(catalogLevels.levels),
+  JSON.stringify(mergedThinking[0].levels))
+check('and those levels reach the entry, with unsupported ones absent',
+  (() => {
+    const efforts = entryFromDraft(mergedThinking[0]).reasoningEfforts
+    return efforts.high === 'high' && efforts.off === null && efforts.xhigh === undefined && efforts.max === undefined
+  })(), JSON.stringify(entryFromDraft(mergedThinking[0]).reasoningEfforts))
+const unknownModel = mergeDiscovered([], ['kimi-k3'], discovered, true, () => ({ known: false, levels: [], spellings: undefined }))
+check('a model the catalog does not describe stays inherited instead of being guessed',
+  unknownModel[0].reasoning === 'inherit' && unknownModel[0].levels.length === 0, JSON.stringify(unknownModel[0]))
+
+// A level's wire value is not always its name: an OpenAI-compatible gateway switches
+// thinking off with the string "none", and one provider maps two levels onto "high".
+const spelled = capabilityTo(Object.assign({}, draftFromRaw(undefined), {
+  reasoning: 'custom', levels: ['off', 'low'], spellings: { off: 'none', low: 'high' },
+}))
+check('a recorded spelling is what gets written, not the level name',
+  JSON.stringify(spelled.reasoningEfforts) === JSON.stringify({ off: 'none', low: 'high' }), JSON.stringify(spelled.reasoningEfforts))
+const unspelled = capabilityTo(Object.assign({}, draftFromRaw(undefined), { reasoning: 'custom', levels: ['off', 'high'] }))
+check('an unrecorded level falls back to the level name, and off to empty',
+  JSON.stringify(unspelled.reasoningEfforts) === JSON.stringify({ off: null, high: 'high' }), JSON.stringify(unspelled.reasoningEfforts))
+check('a custom set with nothing ticked is refused before it reaches the host', (() => {
+  try {
+    capabilityTo(Object.assign({}, draftFromRaw(undefined), { reasoning: 'custom', levels: [] }))
+    return false
+  } catch (error) {
+    return error.code === 'levelsEmpty' || /at least one level/.test(String(error.message))
+  }
+})())
+
+// The live catalog is the authority on what a model offers; the snapshot only adds
+// the spellings, and neither may invent a level set for a model nobody describes.
+const liveCatalog = { groups: [{ id: 'minimax-cn', models: [
+  { id: 'MiniMax-M3', reasoning: { efforts: [{ id: 'off' }, { id: 'low' }, { id: 'high' }] } },
+  { id: 'plain', name: 'Plain' },
+] }] }
+const live = internals.levelsForModel(liveCatalog, 'minimax-cn', 'MiniMax-M3')
+check('the level set comes from the live catalog',
+  live.known === true && JSON.stringify(live.levels) === JSON.stringify(['off', 'low', 'high']), JSON.stringify(live))
+check('a model with no reasoning metadata has no levels but is still known',
+  internals.levelsForModel(liveCatalog, 'minimax-cn', 'plain').known === true
+  && internals.levelsForModel(liveCatalog, 'minimax-cn', 'plain').levels.length === 0)
+check('an unlisted model is not known, so nothing can be declared for it',
+  internals.levelsForModel(liveCatalog, 'minimax-cn', 'nope').known === false)
+check('the snapshot contributes spellings for a recorded model',
+  internals.spellingFor('baseten', 'deepseek-ai/DeepSeek-V4-Pro')?.off === 'none',
+  JSON.stringify(internals.spellingFor('baseten', 'deepseek-ai/DeepSeek-V4-Pro')))
+check('a model with no recorded spelling has none invented',
+  internals.spellingFor('minimax-cn', 'MiniMax-M3') === undefined)
+check('wireFor prefers a recorded spelling and defaults to the level name',
+  internals.wireFor('off', { off: 'none' }) === 'none'
+  && internals.wireFor('low', { low: 'high' }) === 'high'
+  && internals.wireFor('off', undefined) === null
+  && internals.wireFor('high', undefined) === 'high')
 
 check('discovery success unwraps to its models', discoveryOutcome({ ok: true, value: discovered }).kind === 'ok')
 const refused = discoveryOutcome({ ok: false, error: { code: 'UNSUPPORTED_OPERATION', message: 'no listing endpoint' } })
@@ -378,8 +438,17 @@ check('sync on an already aligned list changes nothing',
 
 const candidateDraft = draftFromCandidate({ id: 'x', name: 'X', contextWindow: 4096 }, true)
 check('a fetched candidate becomes an editable draft', candidateDraft.id === 'x' && candidateDraft.contextWindow === '4096', JSON.stringify(candidateDraft))
-check('candidate thinking levels default to undeclared unless asked', draftFromCandidate({ id: 'y' }, false).reasoning === 'inherit'
-  && candidateDraft.levels.length === 7)
+// Without catalog knowledge, asking for thinking declares nothing: the old behaviour
+// seeded all seven levels, which is what wrote an impossible map into a real config.
+check('candidate thinking levels default to undeclared unless the catalog vouches for them',
+  draftFromCandidate({ id: 'y' }, false).reasoning === 'inherit'
+  && candidateDraft.reasoning === 'inherit' && candidateDraft.levels.length === 0,
+  JSON.stringify(candidateDraft))
+check('a candidate with catalog levels declares exactly those',
+  (() => {
+    const withCatalog = draftFromCandidate({ id: 'z' }, true, catalogLevels)
+    return withCatalog.reasoning === 'custom' && JSON.stringify(withCatalog.levels) === JSON.stringify(catalogLevels.levels)
+  })())
 
 check('hasExplicitModels sees a declared list', hasExplicitModels({ value: { providers: { r: { models: [{ id: 'm' }] } } } }, 'r') === true)
 check('hasExplicitModels is false for a catalog route', hasExplicitModels({ value: { providers: { r: { baseURL: 'x' } } } }, 'r') === false)
