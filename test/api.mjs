@@ -652,10 +652,60 @@ check('presets list catalog providers in this plugin\'s own namespace',
   JSON.stringify(presets.map((preset) => preset.id)) === JSON.stringify(['anthropic', 'moonshotai']), JSON.stringify(presets))
 check('a built-in route from another namespace is never offered as a preset',
   presets.every((preset) => preset.id !== 'deepseek-official'))
-check('an already configured route is left out instead of being replaceable',
-  presets.every((preset) => preset.id !== 'go'))
+// A configured provider stays listed: the same person with two accounts on one
+// provider is the ordinary case, and the create form makes a distinct route for it
+// instead of refusing or — worse — landing on the configured one.
+const presetsWithConfigured = presetOptions(presetDirectory, ['go', 'moonshotai'])
+check('an already configured provider is still offered, for a second account',
+  presetsWithConfigured.some((preset) => preset.id === 'moonshotai'),
+  JSON.stringify(presetsWithConfigured.map((preset) => preset.id)))
+check('a declared route is not a preset even when it is unconfigured',
+  presetOptions([{ provider: 'go', displayName: 'opencodego', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'go'], declared: true }], []).length === 0)
 check('a preset carries its display label for the select',
   presets.filter((preset) => preset.id === 'moonshotai')[0]?.label === 'Moonshot AI', JSON.stringify(presets))
+
+// ============================ account numbering =================================
+//
+// One route holds one credential, so a second account needs its own route id. The
+// create write replaces a route wholesale, so this is not cosmetic: landing on a
+// configured route discards its models, protocol and notes.
+const { nextRouteId, presetDefaultsFor } = internals
+check('a free name is used as-is', nextRouteId('moonshotai', ['go', 'zai-coding-cn']) === 'moonshotai')
+check('a taken name is numbered from two', nextRouteId('zai-coding-cn', ['zai-coding-cn']) === 'zai-coding-cn-2')
+check('numbering continues past the accounts already there',
+  nextRouteId('zai-coding-cn', ['zai-coding-cn', 'zai-coding-cn-2', 'zai-coding-cn-3']) === 'zai-coding-cn-4')
+check('numbering needs the base name to be taken, not just a suffix',
+  nextRouteId('zai-coding-cn-2', ['zai-coding-cn']) === 'zai-coding-cn-2')
+check('an empty base stays empty', nextRouteId('', ['anything']) === '' && nextRouteId(undefined, []) === '')
+check('numbering is not confused by a longer name sharing the prefix',
+  nextRouteId('go', ['go-2', 'gopher']) === 'go')
+
+const freePreset = presetDefaultsFor('anthropic', ['go'])
+check('picking a preset for an unconfigured provider keeps the provider id',
+  freePreset.route === 'anthropic' && freePreset.preset === 'anthropic', JSON.stringify(freePreset))
+check('picking a preset pre-fills the catalog protocol and endpoint',
+  freePreset.api === 'anthropic-messages' && freePreset.baseURL === 'https://api.anthropic.com'
+  && freePreset.presetApi === 'anthropic-messages' && freePreset.presetBaseUrl === 'https://api.anthropic.com',
+  JSON.stringify(freePreset))
+const secondAccount = presetDefaultsFor('anthropic', ['go', 'anthropic'])
+check('picking a configured preset yields the next numbered route',
+  secondAccount.route === 'anthropic-2' && secondAccount.preset === 'anthropic', JSON.stringify(secondAccount))
+check('the numbered account still inherits the catalog protocol and endpoint',
+  secondAccount.api === 'anthropic-messages' && secondAccount.baseURL === 'https://api.anthropic.com',
+  JSON.stringify(secondAccount))
+const custom = presetDefaultsFor('', [])
+check('the custom choice clears the preset state and names a protocol',
+  custom.route === '' && custom.preset === '' && custom.api === 'openai-completions' && custom.baseURL === '',
+  JSON.stringify(custom))
+check('a numbered account writes only its own route',
+  (() => {
+    const ops = createOps({
+      preset: 'anthropic', route: 'anthropic-2', displayName: 'Anthropic', api: 'anthropic-messages',
+      baseURL: 'https://api.anthropic.com', presetApi: 'anthropic-messages', presetBaseUrl: 'https://api.anthropic.com', modelId: '',
+    })
+    return JSON.stringify(ops[0].path) === JSON.stringify(['providers', 'anthropic-2'])
+      && JSON.stringify(ops[0].value) === JSON.stringify({ apiKeyEnv: 'ANTHROPIC_2_API_KEY', displayName: 'Anthropic' })
+  })())
 
 const presetOps = createOps({ preset: 'moonshotai', route: 'moonshotai', displayName: 'Moonshot AI', api: '', baseURL: '', modelId: '' })
 check('a preset create writes the credential reference and no endpoint override',

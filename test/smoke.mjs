@@ -620,10 +620,23 @@ for (const host of ['settings', 'drawer']) {
   const values = presetOptionValues(presetSelect)
   check('the preset list excludes built-in routes from other namespaces',
     !values.includes('deepseek-official'), JSON.stringify(values))
-  check('the preset list excludes already configured routes', !values.includes('opencode-go'), JSON.stringify(values))
   check('the preset list offers "custom" as the first choice', values[0] === '', JSON.stringify(values))
   check('a custom create still asks for protocol, endpoint and a model',
     textOf(tree).includes('createModelId') && inputPlaceholders(tree).includes('placeholderBaseURL'), JSON.stringify(inputPlaceholders(tree)))
+
+  // The accident this guards: selecting a preset for a provider this profile already
+  // configures used to land on that same route, and the create write replaces a route
+  // wholesale — so the configured provider's models, protocol and notes were lost.
+  check('the fixture really has that provider configured',
+    textOf(tree).includes('opencode-go'))
+  presetSelect.props.onChange({ target: { value: 'opencode-go' } })
+  tree = render(StudioPanel, props, runtime)
+  const numberedRoute = elements(tree).filter((element) => element.type === 'input' && element.props.value === 'opencode-go-2')[0]
+  check('picking a configured preset yields the next numbered route instead of the configured one',
+    numberedRoute !== undefined, JSON.stringify(elements(tree).filter((element) => element.type === 'input').map((element) => element.props.value)))
+  const numberedRef = textOf(tree)
+  check('the numbered account gets its own credential reference',
+    numberedRef.includes('OPENCODE_GO_2_API_KEY'), numberedRef.slice(0, 300))
 
   presetSelect.props.onChange({ target: { value: 'moonshot' } })
   tree = render(StudioPanel, props, runtime)
