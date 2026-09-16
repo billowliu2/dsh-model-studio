@@ -1,0 +1,12 @@
+# Bundle patch layer for dsh-model-studio.
+#
+# The row loads this package's main entry as the host half (a plain Cordis
+# plugin: it registers the `model-studio` settings namespace for plugin-owned
+# metadata). The browser half is loaded automatically because package.json
+# declares `dsh.client` with `platform: web`; its bundle is `exports["./client"]`.
+#
+# `name` is the package name on purpose: a checkout-relative path would break
+# the moment the package is installed from npm.
+- insert:
+    - id: model-studio
+      name: 'dsh-model-studio'

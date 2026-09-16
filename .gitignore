@@ -1,0 +1,17 @@
+# Dependencies are never installed here: the plugin ships plain JavaScript with
+# none, and `@deepseek-ai/schemastery` is a peer resolved from the DSH profile
+# that mounts it.
+node_modules/
+.pnpm-store/
+pnpm-lock.yaml
+.npmrc
+
+# Local scratch
+*.log
+dev/*.local.yml
+
+# Working notes kept on this machine only: reverse-engineering detail about DSH
+# internals and the plugin's own design log. Deliberately not published.
+DESIGN.md
+dsh-web-plugin-client-reference.md
+research/

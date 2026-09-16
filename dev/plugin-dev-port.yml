@@ -1,0 +1,10 @@
+# Dev-profile overlay: boot the isolated `plugin-dev` profile on a spare port so
+# verifying the plugin never touches the running 127.0.0.1:3080 GUI.
+#
+#   dsh --profile plugin-dev --patch ./dev/plugin-dev-port.yml
+#
+# `/dsh-model-studio/api/health` style checks use the same base URL.
+- id: webserver
+  config:
+    host: 127.0.0.1
+    port: 3180

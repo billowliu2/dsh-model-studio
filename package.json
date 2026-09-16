@@ -1,0 +1,80 @@
+{
+  "name": "dsh-model-studio",
+  "version": "0.1.0",
+  "description": "Advanced model settings for DeepSeek Harness: model providers, per-model capabilities and per-provider request headers, in a right-side drawer launched next to Settings.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/smoke.mjs && node test/api.mjs",
+    "test:host-schema": "node test/host-schema.mjs",
+    "plugin:install": "node scripts/install.mjs",
+    "plugin:uninstall": "node scripts/install.mjs --uninstall",
+    "catalog:defaults": "node scripts/generate-catalog-defaults.mjs",
+    "catalog:check": "node scripts/generate-catalog-defaults.mjs --check"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "plugin",
+    "models",
+    "provider",
+    "model-capabilities",
+    "request-headers",
+    "web-ui"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    "plugin": {
+      "schemaVersion": 1,
+      "category": "models",
+      "displayName": {
+        "zh-CN": "模型商店",
+        "en": "Model Studio"
+      },
+      "summary": {
+        "zh-CN": "集中管理模型供应商、模型能力与按供应商维度的请求头。",
+        "en": "Manage model providers, model capabilities and per-provider request headers."
+      }
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "react": ">=18.2.0 <20.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": false
+    }
+  }
+}
